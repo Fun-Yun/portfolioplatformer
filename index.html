@@ -1,0 +1,366 @@
+<!doctype html> 
+<html lang="en"> 
+<head> 
+    <meta charset="UTF-8" />
+    <title>Making your first Phaser 3 Game - Part 1</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.js"></script>
+    <style type="text/css">
+        body {
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+
+<script type="text/javascript">
+
+    var config = {
+        type: Phaser.AUTO,
+        width: 1280,
+        height: 720,
+        physics: {
+            default: 'arcade',
+            arcade: {
+                gravity: { y: 300 },
+                debug: false
+            }
+        },
+        scene: {
+            preload: preload,
+            create: create,
+            update: update
+        }
+    };
+
+    var goal;
+    var player;
+    var background;
+    var stars;
+    var enemy;
+    var cursors;
+    var score = 0;
+    var scoreText;
+    var gameOver = false;
+    var game = new Phaser.Game(config);
+    var coyoteTime = 100; // Coyote Time in milliseconds
+    var coyoteTimer = 0;
+    var bufferTime = 150; // milliseconds
+    var bufferTimer = 0;
+    var playerSpeed = 250; //Tweak the players speed
+    var airMultipiler = 0.5; //Remove var later once found perfect multiplier
+    var pauseScreen;
+    var pauseText;
+    var restartButton;
+    var loadButton;
+    var saveButton;
+    var isPaused = false;
+    var timerText;
+    var totalTime = 0; // in seconds
+
+    function preload () {
+        this.load.image('sky', 'assets/sky.png');
+        this.load.image('ground', 'assets/platform.png');
+        this.load.image('star', 'assets/star.png');
+        this.load.spritesheet('dude', 'assets/dude.png', { frameWidth: 32, frameHeight: 48 });
+        this.load.spritesheet('enemy', 'assets/enemy.png', {frameWidth: 32, frameHeight: 48});
+        this.load.tilemapTiledJSON('map', 'assets/map.json');
+        this.load.image('tiles', 'assets/tiles.png');
+    }
+
+    function create () {
+        
+        this.physics.world.setBounds(0, 0, 4000, 600); // world is now 4000px wide
+        this.cameras.main.setBounds(0, 0, 4000, 650);
+        this.cameras.main.setZoom(2);
+        this.physics.world.createDebugGraphic();
+           
+        //background = this.add.tileSprite(0, 0, 1280, 720, 'sky').setOrigin(0).setScrollFactor(0); // This makes it stay "locked" to the camera initially
+
+        var map = this.make.tilemap({key: 'map'}); //Loads the json map file
+        var tileset = map.addTilesetImage('tiles', 'tiles'); //Loads the tileset that was used
+        var groundLayer = map.createLayer('Ground', tileset, 0, 0); //Rename "Tile Layer 1" to "Ground" later
+        groundLayer.setCollisionByProperty({collidable: true}); //In Tiled I set each ground tile to collidable
+        
+
+        player = this.physics.add.sprite(100, 450, 'dude'); //player sprite. this.physics.add means it has DYNAMIC phyiscs body by default
+        this.cameras.main.startFollow(player); //Makes the camera follow the player
+
+        player.setBounce(0); //Removed the bounce for now, tighter movement, could delete line later
+        player.setCollideWorldBounds(true); //collides with the game edges/world bounds. Prevents running off edges
+        player.body.setGravityY(700) //Tweaked the gravity
+
+        enemy = this.physics.add.sprite(600, 500, 'enemy');
+        enemy.setCollideWorldBounds(true);
+        enemy.setGravityY(700);
+        this.physics.add.collider(enemy, groundLayer);
+        this.physics.add.collider(player, enemy, playerHitsEnemy, null, this); //Call playerHitsEnemy when they collide      
+        
+        var graphics = this.add.graphics({ lineStyle: { width: 2, color: 0x00ff00 } }); //Debugging the collisions of the ground layer; displays the colliders
+        groundLayer.renderDebug(graphics, {
+            tileColor: null,  
+            collidingTileColor: new Phaser.Display.Color(0, 255, 0), 
+        });
+
+        this.anims.create({
+            key: 'left',
+            frames: this.anims.generateFrameNumbers('dude', { start: 0, end: 3 }), //First 4 images on the sprite sheet are called
+            frameRate: 10,
+            repeat: -1 //Tells the animation to loop
+        });
+
+        this.anims.create({
+            key: 'turn',
+            frames: [ { key: 'dude', frame: 4 } ],
+            frameRate: 20
+        });
+
+        this.anims.create({
+            key: 'right',
+            frames: this.anims.generateFrameNumbers('dude', { start: 5, end: 8 }), //Last 4 images on the sprite sheet are called
+            frameRate: 10,
+            repeat: -1
+        });
+
+        this.anims.create({
+            key: 'enemy-left',
+            frames: this.anims.generateFrameNumbers('enemy', { start: 0, end: 3 }),
+            frameRate: 6,
+            repeat: -1
+        });
+
+        this.anims.create({
+            key: 'enemy-right',
+            frames: this.anims.generateFrameNumbers('enemy', { start: 5, end: 8 }),
+            frameRate: 6,
+            repeat: -1
+        });
+
+        this.anims.create({
+            key: 'enemy-turn',
+            frames: [ { key: 'enemy', frame: 4 } ],
+            frameRate: 20
+        });
+
+        this.physics.add.collider(player, groundLayer); //Adds collision between the player and the platforms
+
+    
+        cursors = this.input.keyboard.createCursorKeys(); //Phasers inbuild keyboard manager
+
+        stars = this.physics.add.group({ //Create new starts group
+            key: 'star',
+            repeat: 11, //repeat 11 times, creating 12
+            setXY: { x: 12, y: 0, stepX: 70 } //create 70px apart
+        });
+
+        stars.children.iterate(function (child) {
+
+            child.setBounceY(Phaser.Math.FloatBetween(0.4, 0.8)); //random bounce value between 0.4 & 0.8
+            child.body.checkCollision.up = false; //added to prevent player from being able to jump on stars
+
+        });
+
+        this.physics.add.collider(stars, groundLayer); //Collision between stars & ground
+        this.physics.add.overlap(player, stars, collectStar, null, this); //Player overlap passes to collectStar function
+        
+        scoreText = this.add.text(16, 16, 'score: 0', { fontSize: '32px', fill: '#000' }); //16x16 is display coords. string is the default to display. fill is text colour. No specified font = default
+
+        timerText = this.add.text(16, 50, 'Time: 0s', { fontSize: '32px', fill: '#000' });
+
+        this.time.addEvent({ //This is a loop with a delay, the delay is...
+            delay: 1000, // ...every second which...
+            callback: function () { //...runs this function every second
+                totalTime++; //Add 1 second
+                timerText.setText('Time: ' + totalTime + 's');
+            },
+            loop: true //runs forever
+        });
+
+        goal = this.physics.add.sprite(1050, 570, 'dude'); //Creates a green dude sprite (placeholder) to act as the goal
+        goal.setTint(0x00ff00); //Greens it
+        goal.setCollideWorldBounds(true);
+        goal.setImmovable(true); //Cannot be moved or pushed
+        goal.body.allowGravity = false; //No gravity
+        this.physics.add.overlap(player, goal, reachGoal, null, this); //When player touches goal run the reachgoal function  
+
+        pauseScreen = this.add.container(0, 0); //Adds a container for the menu to fit in   
+        pauseScreen.setVisible(false); //And it starts invisible
+
+        pauseText = this.add.text(0, -80, 'Paused', { fontSize: '40px', fill: '#fff' }); //"Paused" text
+        pauseText.setOrigin(0.5);
+
+        restartButton = this.add.text(0, -20, 'Restart', { fontSize: '32px', fill: '#0f0' });
+        restartButton.setOrigin(0.5);
+        restartButton.setInteractive(); //Makes an object respond to mouse events; clicking, mouse over, etc
+
+        saveButton = this.add.text(0, 30, 'Save', { fontSize: '32px', fill: '#0f0' });
+        saveButton.setOrigin(0.5);
+        saveButton.setInteractive();
+
+        loadButton = this.add.text(0, 80, 'Load', { fontSize: '32px', fill: '#0f0' });
+        loadButton.setOrigin(0.5);
+        loadButton.setInteractive();
+
+        pauseScreen.add([pauseText, restartButton, saveButton, loadButton]); //adds everything to the screen container
+
+        restartButton.on('pointerdown', function () { //on mouse click
+            console.log('Restart clicked');
+            isPaused = false; 
+            game.scene.scenes[0].physics.world.isPaused = false; //unpause the physics as it's being restarted, without this the game would restart and nothing could move
+            pauseScreen.setVisible(false);
+            game.scene.scenes[0].scene.restart(); //resets the game instance
+        });
+
+        saveButton.on('pointerdown', function () {
+            var saveData = {
+                x: player.x, //storing the players coordinates. This can easily be fleshed out later to include more things to save
+                y: player.y,
+                time: totalTime
+            };
+            localStorage.setItem('playerSave', JSON.stringify(saveData)); //localstorage is browser based, only works with strings. stays when closing the page
+            console.log('Saved Successfully');
+            pauseScreen.setVisible(false);
+            isPaused = false;
+            game.scene.scenes[0].physics.world.isPaused = false;
+        });
+
+        loadButton.on('pointerdown', function () {
+            var saveData = JSON.parse(localStorage.getItem('playerSave')); //parse turns the string back into javascript to be read
+            if (saveData) {
+                player.setX(saveData.x); //sets the players coords
+                player.setY(saveData.y);
+                if (saveData.time !== undefined) { //If there is a time
+                totalTime = saveData.time; //set the timer to the saved time
+                timerText.setText('Time: ' + totalTime + 's');
+                }
+                console.log('Loaded successfully', saveData);
+            } else {
+                console.log('No save detected');
+            }
+
+            pauseScreen.setVisible(false);
+            isPaused = false;
+            game.scene.scenes[0].physics.world.isPaused = false;
+
+        });
+
+
+    }
+
+    function reachGoal(player, goal) {
+        console.log('Goal reached!');
+        isPaused = true;
+        game.scene.scenes[0].physics.world.isPaused = true;
+        pauseScreen.setVisible(true);
+        pauseText.setText('Level Complete'); //Reuses the pause screen but changes the text
+    }
+
+
+    function collectStar (player, star)
+    {
+        star.disableBody(true, true); //Disables the physics body and game object
+        score += 10;
+        scoreText.setText('Score: ' + score);
+
+        if (stars.countActive(true) === 0) //When there are no more stars they are all enabled again and set to y 0
+        {
+            stars.children.iterate(function (child) {
+
+                child.enableBody(true, child.x, 0, true, true);
+
+            });
+        }
+    }
+
+    function playerHitsEnemy(player, enemy) {
+        if (player.body.touching.down && enemy.body.touching.up) { //If player collides on top of the enemy
+            enemy.disableBody(true, true);
+            player.setVelocityY(-200); //Adds a little bounce after destroying the enemy
+        } else {
+            this.physics.pause();
+            player.setTint(0xff0000);
+            player.anims.play('turn'); //kills the player if touches from the side (change to facing side later)
+            gameOver = true;
+        }
+    }
+
+    function isPlayerTouchingGround() {
+        return player.body.blocked.down || player.body.touching.down; //Function here as old check wasn't working. Checks the same "bodytouchingdown" ORs it with "blockeddown", another collision checker
+    }
+
+    function update () {
+
+        //background.tilePositionX = this.cameras.main.scrollX * 0.5; //Makes the background scroll at a slower speed than the camera (parallax)
+
+        if (gameOver)
+        {
+            return;
+        }
+
+        if (this.input.keyboard.checkDown(this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC), 250)) { //pauses on esc down
+        isPaused = !isPaused; //so esc can pause and unpause; its a bool
+        this.physics.world.isPaused = isPaused;
+        pauseScreen.setVisible(isPaused);
+        }
+
+        pauseScreen.setPosition(this.cameras.main.scrollX + this.cameras.main.width / 2, this.cameras.main.scrollY + this.cameras.main.height / 2); //makes sure the pause screen is centred to the camera
+
+        if (isPaused) {
+            return;
+        }
+
+        var touchingGround = isPlayerTouchingGround();
+        
+        if (cursors.left.isDown) //Left key
+        {
+            if (touchingGround){
+                player.setVelocityX(-playerSpeed); //Apply a force to move
+            } else{
+                player.setVelocityX(-playerSpeed * airMultipiler); //Air movement is slower
+            }
+            player.anims.play('left', true); //Play the movement animation
+        }
+        
+        else if (cursors.right.isDown)
+        {
+            if(touchingGround){
+                player.setVelocityX(playerSpeed);
+            }else{
+                player.setVelocityX(playerSpeed * airMultipiler);
+            }
+            
+            player.anims.play('right', true);
+        }
+        else
+        {
+            player.setVelocityX(0); //When no keys are pressed...
+            player.anims.play('turn');//...play the turn animation
+        }
+
+        if (this.time.now <= bufferTimer && this.time.now <= coyoteTimer) {
+        player.setVelocityY(-480);
+        bufferTimer = 0; 
+        coyoteTimer = 0;     
+        }
+
+        if (touchingGround) {
+        coyoteTimer = this.time.now + coyoteTime;
+        }
+
+        if (Phaser.Input.Keyboard.JustDown(cursors.up)) {
+        bufferTimer = this.time.now + bufferTime;
+        }
+
+        if (enemy.active && player.active) {
+            enemy.setVelocityX(-50); //Enemy just moves left right now, like a goomba
+            enemy.anims.play('enemy-left', true);                
+        }
+
+
+        console.log(player.x, player.y);
+        this.physics.world.drawDebug = true;
+    } 
+
+</script>
+
+</body>
+</html>
